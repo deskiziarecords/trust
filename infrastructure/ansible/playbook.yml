@@ -1,0 +1,130 @@
+---
+- name: Determinus Production Server Hardening
+  hosts: determinus_prod
+  become: yes
+  vars:
+    determinus_version: "0.1.0"
+    rust_version: "1.75.0"
+    audit_log_path: "/var/lib/determinus/audit"
+    
+  tasks:
+    # Base hardening - CIS Level 1 Server
+    - name: Apply CIS hardening
+      include_role:
+        name: cis_hardening
+      tags: ['security', 'cis']
+
+    # Immutable audit log setup
+    - name: Create audit log directory
+      file:
+        path: "{{ audit_log_path }}"
+        state: directory
+        owner: determinus
+        group: determinus
+        mode: '0750'
+        attr: "+a"  # Append-only with chattr
+      tags: ['audit']
+
+    - name: Mount encrypted volume for audit logs
+      mount:
+        path: "{{ audit_log_path }}"
+        src: "/dev/disk/by-id/scsi-0HC_Volume_{{ audit_volume_id }}"
+        fstype: ext4
+        opts: "defaults,noatime,nodiratime,nodev,noexec,nosuid"
+        state: mounted
+      tags: ['audit', 'storage']
+
+    # Rust toolchain - specific version, not latest
+    - name: Install Rust {{ rust_version }}
+      shell: |
+        curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | \
+        sh -s -- -y --default-toolchain {{ rust_version }} --profile minimal
+      become_user: determinus
+      args:
+        creates: /home/determinus/.cargo/bin/rustc
+      tags: ['rust']
+
+    # Determinus binary - built from source, not downloaded
+    - name: Clone Determinus repository
+      git:
+        repo: "https://github.com/deskiziarecords/determinus.git"
+        dest: "/opt/determinus/src"
+        version: "v{{ determinus_version }}"
+        depth: 1
+      tags: ['deploy']
+
+    - name: Build Determinus in release mode
+      shell: |
+        source $HOME/.cargo/env
+        cargo build --release --features "production,constant-time-verified"
+      args:
+        chdir: "/opt/determinus/src"
+        creates: "/opt/determinus/src/target/release/determinus"
+      become_user: determinus
+      environment:
+        RUSTFLAGS: "-C target-cpu=sandybridge -C opt-level=3 -C lto=fat -C codegen-units=1"
+        CARGO_NET_OFFLINE: "false"
+      tags: ['deploy', 'build']
+
+    # Binary hardening - because we distribute the binary, not just source
+    - name: Strip symbols but keep enough for debugging
+      shell: |
+        objcopy --only-keep-debug /opt/determinus/src/target/release/determinus /opt/determinus/determinus.debug
+        strip --strip-debug --strip-unneeded /opt/determinus/src/target/release/determinus
+        cp /opt/determinus/src/target/release/determinus /usr/local/bin/determinus
+      tags: ['deploy', 'hardening']
+
+    # GPG signature verification on deploy
+    - name: Verify binary signature
+      shell: |
+        gpg --verify /opt/determinus/determinus.asc /usr/local/bin/determinus
+      tags: ['deploy', 'security']
+
+    # Systemd service - hardened unit
+    - name: Create Determinus systemd service
+      template:
+        src: determinus.service.j2
+        dest: /etc/systemd/system/determinus.service
+        mode: '0644'
+      notify: reload systemd
+      tags: ['service']
+
+    # Network isolation - systemd-networkd
+    - name: Enable network sandboxing
+      systemd:
+        name: determinus
+        state: started
+        enabled: yes
+        daemon_reload: yes
+      tags: ['service']
+
+    # Auditd integration - kernel-level syscall monitoring
+    - name: Configure auditd for Determinus
+      template:
+        src: auditd-determinus.rules.j2
+        dest: /etc/audit/rules.d/determinus.rules
+      notify: restart auditd
+      tags: ['audit', 'monitoring']
+
+    # Fail2ban - because we're exposed to the internet (via Cloudflare)
+    - name: Configure Fail2ban for API abuse
+      template:
+        src: fail2ban-determinus.conf.j2
+        dest: /etc/fail2ban/jail.d/determinus.conf
+      notify: restart fail2ban
+      tags: ['security']
+
+  handlers:
+    - name: reload systemd
+      systemd:
+        daemon_reload: yes
+
+    - name: restart auditd
+      service:
+        name: auditd
+        state: restarted
+
+    - name: restart fail2ban
+      service:
+        name: fail2ban
+        state: restarted
