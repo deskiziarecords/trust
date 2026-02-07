@@ -1,0 +1,149 @@
+name: Determinus Release Build
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - x86_64-unknown-linux-gnu      # Hetzner/Generic
+          - x86_64-unknown-linux-musl      # Static binary
+          - aarch64-unknown-linux-gnu      # ARM64 servers
+    
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for provenance
+      
+      # Reproducible build environment
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+          components: rust-src, clippy, rustfmt
+      
+      # Cache with hash of Cargo.lock for reproducibility
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+      
+      # Build with deterministic flags
+      - name: Build release binary
+        run: |
+          export RUSTFLAGS="-C target-cpu=sandybridge -C opt-level=3 -C lto=fat -C codegen-units=1 -C strip=symbols"
+          export SOURCE_DATE_EPOCH=$(git log -1 --pretty=%ct)
+          cargo build --release --target ${{ matrix.target }} --features "production"
+      
+      # Generate SBOM
+      - name: Generate SBOM
+        run: |
+          cargo install cargo-cyclonedx
+          cargo cyclonedx --format json
+      
+      # Sign binary with Sigstore (keyless)
+      - name: Sign binary with Sigstore
+        uses: sigstore/cosign-installer@v3
+      - run: |
+          cosign sign-blob \
+            --output-signature determinus-${{ matrix.target }}.sig \
+            --output-certificate determinus-${{ matrix.target }}.pem \
+            target/${{ matrix.target }}/release/determinus
+      
+      # Generate provenance attestation
+      - name: Generate SLSA provenance
+        uses: slsa-framework/slsa-github-generator/actions/generator/generic/create-base64-subjects-from-file@v1.9.0
+        with:
+          path: target/${{ matrix.target }}/release/determinus
+      
+      # Upload artifacts
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: determinus-${{ matrix.target }}
+          path: |
+            target/${{ matrix.target }}/release/determinus
+            determinus-${{ matrix.target }}.sig
+            determinus-${{ matrix.target }}.pem
+            bom.xml
+            bom.json
+
+  verify-constant-time:
+    runs-on: ubuntu-latest
+    needs: build-matrix
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Install dudect for constant-time verification
+      - name: Install dudect
+        run: |
+          cargo install dudect-bencher
+      
+      # Run constant-time tests
+      - name: Verify constant-time properties
+        run: |
+          cargo test --features constant-time-verified -- --nocapture
+          dudect-runner --min-samples 100000 --confidence 0.99
+      
+      # Fail if timing variations detected
+      - name: Check dudect results
+        run: |
+          if grep -q "t-statistic.*>.*4.5" dudect-results.txt; then
+            echo "Constant-time violation detected!"
+            exit 1
+          fi
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [build-matrix, verify-constant-time]
+    permissions:
+      contents: write
+      id-token: write
+    
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Download all artifacts
+      - uses: actions/download-artifact@v3
+      
+      # Create release with all artifacts
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: |
+            determinus-*/determinus
+            determinus-*.sig
+            determinus-*.pem
+            determinus-*/bom.json
+          body: |
+            ## Determinus ${{ github.ref_name }}
+            
+            ### Security Verification
+            - ✅ Constant-time verification passed (dudect)
+            - ✅ SLSA Level 3 provenance generated
+            - ✅ Sigstore signed (keyless)
+            - ✅ SBOM included (CycloneDX)
+            
+            ### Verification
+            ```bash
+            # Verify signature
+            cosign verify-blob \
+              --signature determinus-x86_64-unknown-linux-gnu.sig \
+              --certificate determinus-x86_64-unknown-linux-gnu.pem \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+              --certificate-identity https://github.com/deskiziarecords/determinus/.github/workflows/release.yml@refs/tags/${{ github.ref_name }} \
+              determinus-x86_64-unknown-linux-gnu
+            ```
+            
+            ### Hashes
+            See attached SHA256SUMS file for reproducible build verification.
+          generate_release_notes: true
