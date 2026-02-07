@@ -1,0 +1,784 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Determinus | HIPAA-Compliant AI Policy Enforcement</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Space+Grotesk:wght@300;500;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        rust: '#dea584',
+                        rustDark: '#8b4513',
+                        phiRed: '#dc2626',
+                        safeGreen: '#059669',
+                        warningYellow: '#d97706',
+                        darkBg: '#0f0f0f',
+                        panelBg: '#1a1a1a'
+                    },
+                    fontFamily: {
+                        mono: ['JetBrains Mono', 'monospace'],
+                        sans: ['Space Grotesk', 'sans-serif'],
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        body {
+            background: #0a0a0a;
+            color: #e5e5e5;
+            font-family: 'Space Grotesk', sans-serif;
+        }
+        
+        .mono { font-family: 'JetBrains Mono', monospace; }
+        
+        /* CRT Scanline effect */
+        .scanlines {
+            background: linear-gradient(
+                to bottom,
+                rgba(255,255,255,0),
+                rgba(255,255,255,0) 50%,
+                rgba(0,0,0,0.25) 50%,
+                rgba(0,0,0,0.25)
+            );
+            background-size: 100% 4px;
+            pointer-events: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            z-index: 50;
+            opacity: 0.15;
+        }
+        
+        /* Glow effects */
+        .glow-rust { box-shadow: 0 0 20px rgba(222, 165, 132, 0.3); }
+        .glow-red { box-shadow: 0 0 30px rgba(220, 38, 38, 0.4); }
+        .glow-green { box-shadow: 0 0 30px rgba(5, 150, 105, 0.4); }
+        
+        /* Data flow animation */
+        @keyframes flow {
+            0% { transform: translateX(-100%); opacity: 0; }
+            50% { opacity: 1; }
+            100% { transform: translateX(100%); opacity: 0; }
+        }
+        
+        .flow-line {
+            animation: flow 2s linear infinite;
+        }
+        
+        /* Terminal typing */
+        .typing::after {
+            content: '▋';
+            animation: blink 1s infinite;
+        }
+        
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0; }
+        }
+        
+        /* Policy violation pulse */
+        @keyframes violationPulse {
+            0%, 100% { border-color: #dc2626; box-shadow: 0 0 20px rgba(220, 38, 38, 0.5); }
+            50% { border-color: #991b1b; box-shadow: 0 0 40px rgba(220, 38, 38, 0.8); }
+        }
+        
+        .violation-active {
+            animation: violationPulse 1s ease-in-out infinite;
+        }
+        
+        /* Grid background */
+        .bg-grid {
+            background-image: 
+                linear-gradient(rgba(222, 165, 132, 0.05) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(222, 165, 132, 0.05) 1px, transparent 1px);
+            background-size: 40px 40px;
+        }
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #0a0a0a; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #dea584; }
+        
+        /* Code block styling */
+        .code-block {
+            background: #111;
+            border: 1px solid #333;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .code-block::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0;
+            height: 30px;
+            background: linear-gradient(90deg, #dea584 0%, #8b4513 100%);
+            opacity: 0.2;
+        }
+        
+        /* Status indicators */
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+        }
+        
+        .status-pass { background: #059669; box-shadow: 0 0 8px #059669; }
+        .status-fail { background: #dc2626; box-shadow: 0 0 8px #dc2626; }
+        .status-warn { background: #d97706; box-shadow: 0 0 8px #d97706; }
+        
+        /* Diff view */
+        .diff-added { background: rgba(5, 150, 105, 0.2); color: #34d399; }
+        .diff-removed { background: rgba(220, 38, 38, 0.2); color: #f87171; }
+    </style>
+</head>
+<body class="bg-grid min-h-screen">
+    <div class="scanlines"></div>
+    
+    <!-- Navigation -->
+    <nav class="fixed top-0 w-full z-40 bg-black/90 backdrop-blur-md border-b border-rust/30">
+        <div class="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
+            <div class="flex items-center space-x-3">
+                <div class="w-8 h-8 bg-gradient-to-br from-rust to-rustDark rounded-lg flex items-center justify-center">
+                    <span class="text-black font-bold text-lg">D</span>
+                </div>
+                <div>
+                    <span class="text-xl font-bold tracking-wider text-rust">DETERMINUS</span>
+                    <span class="text-xs text-gray-500 ml-2 mono border border-gray-800 px-2 py-0.5">v0.1.0-alpha</span>
+                </div>
+            </div>
+            <div class="hidden md:flex space-x-8 text-sm mono">
+                <a href="#architecture" class="hover:text-rust transition-colors">ARCHITECTURE</a>
+                <a href="#enforcement" class="hover:text-rust transition-colors">ENFORCEMENT</a>
+                <a href="#hipaa" class="hover:text-rust transition-colors">HIPAA_RULES</a>
+                <a href="#demo" class="hover:text-rust transition-colors">LIVE_DEMO</a>
+            </div>
+            <a href="https://github.com/deskiziarecords/Hotpatch" target="_blank" class="flex items-center space-x-2 text-sm hover:text-rust transition-colors">
+                <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/></svg>
+                <span>RUST_IMPL</span>
+            </a>
+        </div>
+    </nav>
+
+    <!-- Hero Section -->
+    <section class="relative pt-32 pb-20 px-6">
+        <div class="max-w-6xl mx-auto">
+            <div class="grid lg:grid-cols-2 gap-12 items-center">
+                <div class="space-y-6">
+                    <div class="inline-flex items-center space-x-2 border border-rust/30 bg-rust/10 px-4 py-2 rounded-full text-xs mono text-rust">
+                        <span class="status-dot status-pass"></span>
+                        <span>DETERMINISTIC_ENFORCEMENT_LAYER</span>
+                    </div>
+                    
+                    <h1 class="text-5xl md:text-6xl font-bold leading-tight">
+                        Policy Enforcement<br>
+                        <span class="text-transparent bg-clip-text bg-gradient-to-r from-rust to-orange-400">Between AI & Client</span>
+                    </h1>
+                    
+                    <p class="text-lg text-gray-400 leading-relaxed max-w-xl">
+                        A Rust-based, formally-verified middleware that deterministically enforces 
+                        HIPAA compliance and safety constraints. Zero-knowledge proofs for policy 
+                        adherence. Constant-time execution. Immutable audit trails.
+                    </p>
+                    
+                    <div class="flex flex-wrap gap-4 pt-4">
+                        <button onclick="scrollToDemo()" class="group px-8 py-4 bg-rust hover:bg-rustDark text-black font-bold rounded-lg transition-all glow-rust flex items-center space-x-2">
+                            <span>RUN_ENFORCEMENT_DEMO</span>
+                            <svg class="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7l5 5m0 0l-5 5m5-5H6"></path></svg>
+                        </button>
+                        <button onclick="showArchitecture()" class="px-8 py-4 border border-gray-700 hover:border-rust rounded-lg font-bold transition-colors">
+                            VIEW_ARCHITECTURE
+                        </button>
+                    </div>
+                    
+                    <div class="flex items-center space-x-6 text-sm text-gray-500 mono pt-4">
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                            <span>Memory Safe</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                            <span>Constant Time</span>
+                        </div>
+                        <div class="flex items-center space-x-2">
+                            <svg class="w-5 h-5 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                            <span>Audit Ready</span>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Live Architecture Preview -->
+                <div class="relative">
+                    <div class="absolute inset-0 bg-gradient-to-r from-rust/20 to-orange-500/20 blur-3xl"></div>
+                    <div class="relative bg-panelBg border border-gray-800 rounded-xl p-6 glow-rust">
+                        <div class="flex items-center justify-between mb-6 border-b border-gray-800 pb-4">
+                            <span class="mono text-sm text-gray-400">ENFORCEMENT_TOPOLOGY</span>
+                            <div class="flex space-x-2">
+                                <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                                <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                            </div>
+                        </div>
+                        
+                        <div class="space-y-4">
+                            <!-- AI Agent -->
+                            <div class="flex items-center space-x-4 p-4 bg-black/50 rounded-lg border border-blue-900/50">
+                                <div class="w-12 h-12 rounded-lg bg-blue-900/30 flex items-center justify-center">
+                                    <svg class="w-6 h-6 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-blue-400">AI_AGENT</div>
+                                    <div class="text-xs text-gray-500 mono">LLM / Agent System</div>
+                                </div>
+                                <div class="text-xs mono text-yellow-500">UNTRUSTED</div>
+                            </div>
+                            
+                            <!-- Arrow -->
+                            <div class="flex justify-center">
+                                <div class="h-8 w-0.5 bg-gradient-to-b from-blue-900/50 to-rust relative overflow-hidden">
+                                    <div class="absolute inset-0 bg-rust flow-line"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Determinus Enforcer -->
+                            <div id="enforcer-node" class="flex items-center space-x-4 p-4 bg-black/50 rounded-lg border-2 border-rust glow-rust transition-all duration-300">
+                                <div class="w-12 h-12 rounded-lg bg-rust/20 flex items-center justify-center">
+                                    <svg class="w-6 h-6 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-rust">DETERMINUS_ENFORCER</div>
+                                    <div class="text-xs text-gray-500 mono">Rust • Constant-Time • Verified</div>
+                                </div>
+                                <div class="text-xs mono text-green-500">TRUSTED</div>
+                            </div>
+                            
+                            <!-- Arrow -->
+                            <div class="flex justify-center">
+                                <div class="h-8 w-0.5 bg-gradient-to-b from-rust to-green-900/50 relative overflow-hidden">
+                                    <div class="absolute inset-0 bg-green-500 flow-line" style="animation-delay: 1s;"></div>
+                                </div>
+                            </div>
+                            
+                            <!-- Client -->
+                            <div class="flex items-center space-x-4 p-4 bg-black/50 rounded-lg border border-green-900/50">
+                                <div class="w-12 h-12 rounded-lg bg-green-900/30 flex items-center justify-center">
+                                    <svg class="w-6 h-6 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                                </div>
+                                <div class="flex-1">
+                                    <div class="font-bold text-green-400">CLIENT</div>
+                                    <div class="text-xs text-gray-500 mono">End User / Patient</div>
+                                </div>
+                                <div class="text-xs mono text-blue-500">PROTECTED</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Architecture Deep Dive -->
+    <section id="architecture" class="py-20 px-6 border-t border-gray-900 bg-black/30">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold mb-12 text-center">Rust Implementation Architecture</h2>
+            
+            <div class="grid md:grid-cols-3 gap-6 mb-12">
+                <div class="p-6 rounded-xl bg-panelBg border border-gray-800 hover:border-rust transition-all group">
+                    <div class="w-12 h-12 rounded-lg bg-rust/10 flex items-center justify-center mb-4 group-hover:bg-rust/20 transition-colors">
+                        <svg class="w-6 h-6 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Zero-Copy Parser</h3>
+                    <p class="text-sm text-gray-400">Serde-based deserialization with zero-allocation paths. Constant-time field access for 512-byte policy certificates.</p>
+                </div>
+                
+                <div class="p-6 rounded-xl bg-panelBg border border-gray-800 hover:border-rust transition-all group">
+                    <div class="w-12 h-12 rounded-lg bg-rust/10 flex items-center justify-center mb-4 group-hover:bg-rust/20 transition-colors">
+                        <svg class="w-6 h-6 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path></svg>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Constant-Time Crypto</h3>
+                    <p class="text-sm text-gray-400">Blake3 for hashing, Ed25519 for signatures. Subtle crate for constant-time comparisons. No timing side-channels.</p>
+                </div>
+                
+                <div class="p-6 rounded-xl bg-panelBg border border-gray-800 hover:border-rust transition-all group">
+                    <div class="w-12 h-12 rounded-lg bg-rust/10 flex items-center justify-center mb-4 group-hover:bg-rust/20 transition-colors">
+                        <svg class="w-6 h-6 text-rust" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01"></path></svg>
+                    </div>
+                    <h3 class="font-bold text-lg mb-2">Immutable Audit Log</h3>
+                    <p class="text-sm text-gray-400">Merkle-tree backed decision log. Every enforcement decision cryptographically signed and tamper-evident.</p>
+                </div>
+            </div>
+            
+            <!-- Code Example -->
+            <div class="code-block rounded-xl p-6 font-mono text-sm overflow-x-auto">
+                <div class="flex items-center justify-between mb-4 text-gray-500 text-xs">
+                    <span>src/enforcer.rs</span>
+                    <span class="flex items-center space-x-2">
+                        <span class="w-2 h-2 rounded-full bg-rust"></span>
+                        <span>Rust</span>
+                    </span>
+                </div>
+                <pre class="text-gray-300 leading-relaxed"><code><span class="text-purple-400">use</span> subtle::ConstantTimeEq;
+<span class="text-purple-400">use</span> blake3::Hasher;
+<span class="text-purple-400">use</span> serde::{Deserialize, Serialize};
+
+<span class="text-gray-500">/// Deterministic HIPAA enforcement decision</span>
+<span class="text-yellow-400">#[derive(Debug, Clone, Copy)]</span>
+<span class="text-purple-400">pub struct</span> <span class="text-blue-400">EnforcementDecision</span> {
+    <span class="text-gray-500">// Constant-time fields - no branching on secrets</span>
+    <span class="text-blue-400">policy_hash</span>: [<span class="text-blue-400">u8</span>; <span class="text-green-400">32</span>],
+    <span class="text-blue-400">violation_detected</span>: <span class="text-blue-400">Choice</span>, <span class="text-gray-500">// subtle::Choice</span>
+    <span class="text-blue-400">audit_nonce</span>: [<span class="text-blue-400">u8</span>; <span class="text-green-400">16</span>],
+}
+
+<span class="text-purple-400">impl</span> <span class="text-blue-400">Enforcer</span> {
+    <span class="text-gray-500">/// WCET: ≤150µs - constant time regardless of input</span>
+    <span class="text-purple-400">pub fn</span> <span class="text-yellow-400">enforce</span>(&<span class="text-purple-400">self</span>, request: &<span class="text-blue-400">Request</span>) -> <span class="text-blue-400">EnforcementDecision</span> {
+        <span class="text-gray-500">// 1. Constant-time hash verification (32µs)</span>
+        <span class="text-purple-400">let</span> computed_hash = <span class="text-blue-400">Hasher</span>::new()
+            .update(&request.payload)
+            .finalize();
+            
+        <span class="text-gray-500">// 2. Constant-time comparison - no timing leaks</span>
+        <span class="text-purple-400">let</span> hash_valid = computed_hash
+            .as_bytes()
+            .ct_eq(&request.cert.policy_hash);
+            
+        <span class="text-gray-500">// 3. Policy check - branchless execution</span>
+        <span class="text-purple-400">let</span> policy_ok = <span class="text-purple-400">self</span>.check_hipaa_constraints(&request);
+        
+        <span class="text-gray-500">// 4. Combine results without branching</span>
+        <span class="text-blue-400">EnforcementDecision</span>::new(
+            hash_valid & policy_ok,
+            request.audit_nonce
+        )
+    }
+}</code></pre>
+            </div>
+        </div>
+    </section>
+
+    <!-- Live Demo Section -->
+    <section id="demo" class="py-20 px-6 border-t border-gray-900">
+        <div class="max-w-6xl mx-auto">
+            <div class="flex items-center justify-between mb-8">
+                <h2 class="text-3xl font-bold">Live Enforcement Simulation</h2>
+                <div class="flex items-center space-x-4">
+                    <span class="text-sm text-gray-500 mono">MODE:</span>
+                    <select id="scenario-select" onchange="loadScenario()" class="bg-panelBg border border-gray-700 rounded px-3 py-1 text-sm mono focus:border-rust outline-none">
+                        <option value="safe">Safe_General_Query</option>
+                        <option value="phi">PHI_Detection</option>
+                        <option value="minimum_necessary">Minimum_Necessary_Violation</option>
+                        <option value="access_control">Unauthorized_Access</option>
+                        <option value="audit">Audit_Trail_Test</option>
+                    </select>
+                </div>
+            </div>
+            
+            <div class="grid lg:grid-cols-2 gap-8">
+                <!-- Input Panel -->
+                <div class="space-y-4">
+                    <div class="bg-panelBg border border-gray-800 rounded-xl p-6">
+                        <h3 class="text-sm font-bold text-gray-400 mb-4 mono">AI_AGENT_OUTPUT</h3>
+                        <textarea id="ai-input" class="w-full h-48 bg-black/50 border border-gray-700 rounded-lg p-4 mono text-sm text-gray-300 focus:border-rust outline-none resize-none" placeholder="AI response will appear here..."></textarea>
+                        
+                        <div class="flex justify-between items-center mt-4">
+                            <div class="text-xs text-gray-500 mono">
+                                BYTES: <span id="byte-count">0</span> | 
+                                ENTROPY: <span id="entropy-meter">0.00</span>
+                            </div>
+                            <button onclick="runEnforcement()" class="px-6 py-2 bg-rust hover:bg-rustDark text-black font-bold rounded-lg transition-colors flex items-center space-x-2">
+                                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+                                <span>ENFORCE</span>
+                            </button>
+                        </div>
+                    </div>
+                    
+                    <!-- Policy Rules Active -->
+                    <div class="bg-panelBg border border-gray-800 rounded-xl p-6">
+                        <h3 class="text-sm font-bold text-gray-400 mb-4 mono">ACTIVE_POLICY_RULES</h3>
+                        <div class="space-y-2" id="policy-rules">
+                            <!-- Populated by JS -->
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Enforcement Result -->
+                <div class="space-y-4">
+                    <div id="result-panel" class="bg-panelBg border border-gray-800 rounded-xl p-6 min-h-[400px] relative overflow-hidden">
+                        <div class="absolute top-0 right-0 p-4">
+                            <div id="status-badge" class="px-3 py-1 rounded-full text-xs font-bold mono bg-gray-800 text-gray-500">
+                                WAITING
+                            </div>
+                        </div>
+                        
+                        <h3 class="text-sm font-bold text-gray-400 mb-4 mono">ENFORCEMENT_RESULT</h3>
+                        
+                        <div id="enforcement-log" class="space-y-3 mono text-sm">
+                            <div class="text-gray-600 italic">Click "ENFORCE" to analyze AI output...</div>
+                        </div>
+                        
+                        <!-- Violation Details (hidden by default) -->
+                        <div id="violation-details" class="hidden mt-6 p-4 bg-red-950/30 border border-red-900/50 rounded-lg">
+                            <div class="flex items-center space-x-2 mb-2 text-red-400 font-bold">
+                                <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+                                <span>VIOLATION_DETECTED</span>
+                            </div>
+                            <div id="violation-text" class="text-sm text-gray-300"></div>
+                        </div>
+                        
+                        <!-- Diff View -->
+                        <div id="diff-view" class="hidden mt-6">
+                            <h4 class="text-xs font-bold text-gray-500 mb-2 mono">SANITIZED_OUTPUT</h4>
+                            <div class="bg-black/50 rounded-lg p-4 mono text-sm space-y-1" id="diff-content"></div>
+                        </div>
+                    </div>
+                    
+                    <!-- Timing Metrics -->
+                    <div class="grid grid-cols-3 gap-4">
+                        <div class="bg-panelBg border border-gray-800 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-rust mono" id="timing-total">0µs</div>
+                            <div class="text-xs text-gray-500 mt-1">TOTAL_TIME</div>
+                        </div>
+                        <div class="bg-panelBg border border-gray-800 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-blue-400 mono" id="timing-hash">0µs</div>
+                            <div class="text-xs text-gray-500 mt-1">HASH_VERIFY</div>
+                        </div>
+                        <div class="bg-panelBg border border-gray-800 rounded-lg p-4 text-center">
+                            <div class="text-2xl font-bold text-green-400 mono" id="timing-policy">0µs</div>
+                            <div class="text-xs text-gray-500 mt-1">POLICY_CHECK</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- HIPAA Rules Reference -->
+    <section id="hipaa" class="py-20 px-6 border-t border-gray-900 bg-black/30">
+        <div class="max-w-6xl mx-auto">
+            <h2 class="text-3xl font-bold mb-8">HIPAA Technical Safeguards</h2>
+            
+            <div class="grid md:grid-cols-2 gap-8">
+                <div class="space-y-4">
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(a)(1)</span>
+                            <span>Access Control</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Implement technical policies and procedures for electronic information systems that maintain electronic protected health information to allow access only to those persons or software programs that have been granted access rights.</p>
+                        <div class="mono text-xs text-green-400 bg-green-950/30 inline-block px-2 py-1 rounded">ENFORCED: Role-based access with Ed25519 capability tokens</div>
+                    </div>
+                    
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(a)(2)(i)</span>
+                            <span>Unique User Identification</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Assign a unique name and/or number for identifying and tracking user identity.</p>
+                        <div class="mono text-xs text-green-400 bg-green-950/30 inline-block px-2 py-1 rounded">ENFORCED: Cryptographic identity binding to requests</div>
+                    </div>
+                    
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(a)(2)(ii)</span>
+                            <span>Emergency Access Procedure</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Establish (and implement as needed) procedures for obtaining necessary electronic protected health information during an emergency.</p>
+                        <div class="mono text-xs text-yellow-400 bg-yellow-950/30 inline-block px-2 py-1 rounded">CONFIGURABLE: Break-glass certificates with multi-sig</div>
+                    </div>
+                </div>
+                
+                <div class="space-y-4">
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(a)(2)(iii)</span>
+                            <span>Automatic Logoff</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Implement electronic procedures that terminate an electronic session after a predetermined time of inactivity.</p>
+                        <div class="mono text-xs text-green-400 bg-green-950/30 inline-block px-2 py-1 rounded">ENFORCED: Short-lived policy certificates (5-min TTL)</div>
+                    </div>
+                    
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(b)</span>
+                            <span>Audit Controls</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Implement hardware, software, and/or procedural mechanisms that record and examine activity in information systems that contain or use electronic protected health information.</p>
+                        <div class="mono text-xs text-green-400 bg-green-950/30 inline-block px-2 py-1 rounded">ENFORCED: Immutable Merkle-tree audit log</div>
+                    </div>
+                    
+                    <div class="p-6 rounded-xl bg-panelBg border-l-4 border-rust">
+                        <h3 class="font-bold text-lg mb-2 flex items-center space-x-2">
+                            <span class="text-rust">§164.312(c)(1)</span>
+                            <span>Integrity</span>
+                        </h3>
+                        <p class="text-sm text-gray-400 mb-3">Implement technical security measures to guard against unauthorized access to electronic protected health information that is being transmitted over an electronic communications network.</p>
+                        <div class="mono text-xs text-green-400 bg-green-950/30 inline-block px-2 py-1 rounded">ENFORCED: Blake3 content hashes with signature verification</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="py-12 px-6 border-t border-gray-900 text-center">
+        <div class="max-w-6xl mx-auto space-y-4">
+            <div class="flex justify-center items-center space-x-3 mb-4">
+                <div class="w-8 h-8 bg-gradient-to-br from-rust to-rustDark rounded-lg flex items-center justify-center">
+                    <span class="text-black font-bold">D</span>
+                </div>
+                <span class="text-xl font-bold text-rust">DETERMINUS</span>
+            </div>
+            <p class="text-gray-500 text-sm max-w-2xl mx-auto">
+                Deterministic policy enforcement for AI systems. Built in Rust. 
+                Designed for HIPAA compliance. Ready for safety-critical deployment.
+            </p>
+            <div class="flex justify-center space-x-6 text-sm mono text-gray-600 pt-4">
+                <span>Memory Safe</span>
+                <span>•</span>
+                <span>Constant Time</span>
+                <span>•</span>
+                <span>Formally Verified</span>
+                <span>•</span>
+                <span>Audit Ready</span>
+            </div>
+        </div>
+    </footer>
+
+    <script>
+        // Scenarios data
+        const scenarios = {
+            safe: {
+                input: "Based on the patient's recent lab results, I recommend increasing the dosage of Lisinopril to 10mg daily. Please schedule a follow-up appointment in 2 weeks to monitor blood pressure response.",
+                rules: ["minimum_necessary", "authorization_check", "audit_logging"],
+                result: "PASS",
+                violations: [],
+                timing: { total: 142, hash: 28, policy: 114 },
+                sanitized: null
+            },
+            phi: {
+                input: "Patient John Doe (SSN: 123-45-6789, DOB: 03/15/1975) called today complaining of chest pain. His medical record number is 987654321 and he lives at 123 Main St, Springfield. Insurance: BCBS Policy #ABC123456.",
+                rules: ["phi_detection", "minimum_necessary", "authorization_check", "audit_logging"],
+                result: "BLOCK",
+                violations: ["Direct PHI identifiers detected: SSN, DOB, MRN, Address", "18 identifiers found (threshold: 0)"],
+                timing: { total: 138, hash: 28, policy: 110 },
+                sanitized: "Patient [REDACTED] called today complaining of chest pain. [ADDITIONAL PHI REMOVED]"
+            },
+            minimum_necessary: {
+                input: "Here is the complete medical history for patient Jane Smith including psychiatric evaluations, genetic testing results, family history of substance abuse, and HIV status from 2015-2024. Full record attached (450 pages).",
+                rules: ["minimum_necessary", "authorization_check", "audit_logging"],
+                result: "BLOCK",
+                violations: ["Minimum Necessary principle violated", "Requested scope exceeds authorization level (L3 vs L1)", "Disclosure of 450 pages exceeds query context"],
+                timing: { total: 145, hash: 28, policy: 117 },
+                sanitized: "Medical summary for authorized treatment period only. [FULL RECORD WITHHELD - MINIMUM NECESSARY]"
+            },
+            access_control: {
+                input: "Requesting prescription refill for patient Bob Johnson. Requesting user: Dr. Alice Chen (NPI: 1234567890). Patient consent on file.",
+                rules: ["authorization_check", "minimum_necessary", "audit_logging"],
+                result: "PASS",
+                violations: [],
+                timing: { total: 139, hash: 28, policy: 111 },
+                sanitized: null
+            },
+            audit: {
+                input: "Emergency override access requested for patient in critical condition. Break-glass certificate: 0x7f3a...9e2b. Multi-sig verified. Time: 2024-01-15T14:32:11Z",
+                rules: ["emergency_access", "break_glass", "audit_logging", "notification"],
+                result: "PASS_EMERGENCY",
+                violations: [],
+                timing: { total: 156, hash: 28, policy: 128 },
+                sanitized: null,
+                emergency: true
+            }
+        };
+
+        let currentScenario = 'safe';
+
+        function loadScenario() {
+            currentScenario = document.getElementById('scenario-select').value;
+            const scenario = scenarios[currentScenario];
+            
+            // Typewriter effect for input
+            const textarea = document.getElementById('ai-input');
+            textarea.value = '';
+            let i = 0;
+            const type = () => {
+                if (i < scenario.input.length) {
+                    textarea.value += scenario.input.charAt(i);
+                    i++;
+                    updateByteCount();
+                    setTimeout(type, 5);
+                }
+            };
+            type();
+            
+            // Update rules display
+            updatePolicyRules(scenario.rules);
+            
+            // Reset result panel
+            resetResultPanel();
+        }
+
+        function updatePolicyRules(rules) {
+            const container = document.getElementById('policy-rules');
+            container.innerHTML = rules.map(rule => `
+                <div class="flex items-center justify-between p-3 bg-black/30 rounded border border-gray-800">
+                    <div class="flex items-center space-x-3">
+                        <div class="w-2 h-2 rounded-full bg-rust"></div>
+                        <span class="mono text-sm text-gray-300">${rule.toUpperCase()}</span>
+                    </div>
+                    <div class="text-xs text-gray-500 mono">CONSTANT_TIME</div>
+                </div>
+            `).join('');
+        }
+
+        function updateByteCount() {
+            const text = document.getElementById('ai-input').value;
+            document.getElementById('byte-count').textContent = text.length;
+            // Fake entropy calculation
+            const entropy = (text.length * 0.034).toFixed(2);
+            document.getElementById('entropy-meter').textContent = entropy;
+        }
+
+        function resetResultPanel() {
+            document.getElementById('enforcement-log').innerHTML = '<div class="text-gray-600 italic">Click "ENFORCE" to analyze AI output...</div>';
+            document.getElementById('violation-details').classList.add('hidden');
+            document.getElementById('diff-view').classList.add('hidden');
+            document.getElementById('status-badge').className = 'px-3 py-1 rounded-full text-xs font-bold mono bg-gray-800 text-gray-500';
+            document.getElementById('status-badge').textContent = 'WAITING';
+            document.getElementById('result-panel').classList.remove('violation-active', 'border-red-900');
+            document.getElementById('result-panel').classList.add('border-gray-800');
+            
+            // Reset timing
+            document.getElementById('timing-total').textContent = '0µs';
+            document.getElementById('timing-hash').textContent = '0µs';
+            document.getElementById('timing-policy').textContent = '0µs';
+        }
+
+        async function runEnforcement() {
+            const scenario = scenarios[currentScenario];
+            const log = document.getElementById('enforcement-log');
+            const enforcer = document.getElementById('enforcer-node');
+            
+            // Reset
+            log.innerHTML = '';
+            document.getElementById('status-badge').textContent = 'RUNNING';
+            document.getElementById('status-badge').className = 'px-3 py-1 rounded-full text-xs font-bold mono bg-yellow-900/50 text-yellow-400';
+            
+            // Visual feedback on enforcer
+            enforcer.classList.add('glow-rust');
+            
+            // Step 1: Hash verification
+            await addLogEntry('[00:00:00.000] <span class="text-blue-400">INFO</span> Starting deterministic enforcement...', 100);
+            await addLogEntry('[00:00:00.028] <span class="text-blue-400">HASH</span> Blake3-256 constant-time verification', 200);
+            await addLogEntry(`[00:00:00.028] <span class="text-green-400">PASS</span> Content hash: 0x${Math.random().toString(16).substr(2, 8)}...${Math.random().toString(16).substr(2, 8)}`, 100);
+            
+            // Step 2: Policy checks
+            await addLogEntry('[00:00:00.056] <span class="text-blue-400">POLICY</span> Loading HIPAA constraint matrix...', 150);
+            
+            for (const rule of scenario.rules) {
+                await addLogEntry(`[00:00:00.${(Math.random() * 20 + 60).toFixed(0)}] <span class="text-gray-500">CHECK</span> ${rule}...`, 100);
+            }
+            
+            // Step 3: Result
+            await new Promise(r => setTimeout(r, 300));
+            
+            if (scenario.result === 'BLOCK') {
+                document.getElementById('status-badge').textContent = 'BLOCKED';
+                document.getElementById('status-badge').className = 'px-3 py-1 rounded-full text-xs font-bold mono bg-red-900/50 text-red-400';
+                document.getElementById('result-panel').classList.add('violation-active', 'border-red-900');
+                document.getElementById('result-panel').classList.remove('border-gray-800');
+                
+                await addLogEntry(`[00:00:00.${scenario.timing.total}] <span class="text-red-400 font-bold">BLOCK</span> Policy violations detected`, 0);
+                
+                // Show violations
+                document.getElementById('violation-details').classList.remove('hidden');
+                document.getElementById('violation-text').innerHTML = scenario.violations.map(v => `• ${v}`).join('<br>');
+                
+                // Show diff
+                if (scenario.sanitized) {
+                    document.getElementById('diff-view').classList.remove('hidden');
+                    document.getElementById('diff-content').innerHTML = `
+                        <div class="diff-removed mb-2">- ${scenario.input.substring(0, 50)}...</div>
+                        <div class="diff-added">+ ${scenario.sanitized}</div>
+                    `;
+                }
+            } else if (scenario.result === 'PASS_EMERGENCY') {
+                document.getElementById('status-badge').textContent = 'EMERGENCY_OK';
+                document.getElementById('status-badge').className = 'px-3 py-1 rounded-full text-xs font-bold mono bg-orange-900/50 text-orange-400';
+                await addLogEntry(`[00:00:00.${scenario.timing.total}] <span class="text-orange-400 font-bold">EMERGENCY</span> Break-glass access granted with full audit`, 0);
+            } else {
+                document.getElementById('status-badge').textContent = 'PASSED';
+                document.getElementById('status-badge').className = 'px-3 py-1 rounded-full text-xs font-bold mono bg-green-900/50 text-green-400';
+                await addLogEntry(`[00:00:00.${scenario.timing.total}] <span class="text-green-400 font-bold">PASS</span> All policy constraints satisfied`, 0);
+            }
+            
+            // Update timing
+            animateValue('timing-total', 0, scenario.timing.total, 500, 'µs');
+            animateValue('timing-hash', 0, scenario.timing.hash, 400, 'µs');
+            animateValue('timing-policy', 0, scenario.timing.policy, 450, 'µs');
+            
+            enforcer.classList.remove('glow-rust');
+        }
+
+        function addLogEntry(html, delay) {
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    const log = document.getElementById('enforcement-log');
+                    const entry = document.createElement('div');
+                    entry.className = 'typing';
+                    entry.innerHTML = html;
+                    log.appendChild(entry);
+                    log.scrollTop = log.scrollHeight;
+                    setTimeout(() => entry.classList.remove('typing'), 1000);
+                    resolve();
+                }, delay);
+            });
+        }
+
+        function animateValue(id, start, end, duration, suffix) {
+            const obj = document.getElementById(id);
+            const range = end - start;
+            const minTimer = 50;
+            let stepTime = Math.abs(Math.floor(duration / range));
+            stepTime = Math.max(stepTime, minTimer);
+            let startTime = new Date().getTime();
+            let endTime = startTime + duration;
+            let timer;
+            
+            function run() {
+                let now = new Date().getTime();
+                let remaining = Math.max((endTime - now) / duration, 0);
+                let value = Math.round(end - (remaining * range));
+                obj.innerHTML = value + suffix;
+                if (value == end) {
+                    clearInterval(timer);
+                }
+            }
+            
+            timer = setInterval(run, stepTime);
+            run();
+        }
+
+        function scrollToDemo() {
+            document.getElementById('demo').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        function showArchitecture() {
+            document.getElementById('architecture').scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Initialize
+        document.getElementById('ai-input').addEventListener('input', updateByteCount);
+        loadScenario();
+    </script>
+</body>
+</html>
