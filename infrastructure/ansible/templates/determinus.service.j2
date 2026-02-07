@@ -1,0 +1,72 @@
+[Unit]
+Description=Determinus Policy Enforcement Engine
+Documentation=https://docs.determinus.rs
+After=network.target auditd.service
+Wants=auditd.service
+
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/determinus --config /etc/determinus/config.toml
+ExecReload=/bin/kill -HUP $MAINPID
+KillMode=process
+Restart=on-failure
+RestartSec=5
+
+# Security hardening - systemd's "security" command should show green
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectHome=true
+ProtectSystem=strict
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+
+# Capability bounding - minimal required
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_AUDIT_WRITE
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# Filesystem restrictions
+ReadWritePaths=/var/lib/determinus/audit /var/log/determinus
+ReadOnlyPaths=/etc/determinus /usr/share/determinus
+
+# Network restrictions - only localhost + Cloudflare
+IPAddressAllow=127.0.0.1
+IPAddressAllow=::1
+# Cloudflare IP ranges populated by Terraform
+IPAddressAllow=173.245.48.0/20
+IPAddressAllow=103.21.244.0/22
+IPAddressAllow=103.22.200.0/22
+IPAddressAllow=103.31.4.0/22
+IPAddressAllow=141.101.64.0/18
+IPAddressAllow=108.162.192.0/18
+IPAddressAllow=190.93.240.0/20
+IPAddressAllow=188.114.96.0/20
+IPAddressAllow=197.234.240.0/22
+IPAddressAllow=198.41.128.0/17
+IPAddressAllow=162.158.0.0/15
+IPAddressAllow=104.16.0.0/13
+IPAddressAllow=104.24.0.0/14
+IPAddressAllow=172.64.0.0/13
+IPAddressAllow=131.0.72.0/22
+
+# Resource limits - prevent DoS
+LimitNOFILE=65536
+LimitNPROC=4096
+LimitAS=4G
+LimitRSS=2G
+LimitCPU=200%
+TasksMax=4096
+
+# OOM protection - audit logs must survive
+OOMScoreAdjust=-1000
+
+# Watchdog - systemd expects ping every 30s
+WatchdogSec=30
+
+[Install]
+WantedBy=multi-user.target
